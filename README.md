@@ -40,3 +40,61 @@ col_names = "(#{self.class.columns.join(', ')})"
 questions_marks = ['?'] * self.class.columns.length
 questions_marks = "(#{questions_marks.join(', ')})"
 ```
+
+Lastly, `#save` calls either `#update` or `#insert` depending on whether the object currently has an id or not. That way, the user can simply call `#save` rather than worrying about which of the other two to call:
+```ruby
+def save
+  self.id.nil? ? self.insert : self.update
+end
+```
+
+### Searchable
+Searchable is a module that adds the `::where` class method to SQLObject by mixing in Searchable to SQLObject:
+```ruby
+module Searchable
+  def where(params)
+    where_line = params.keys.map { |key| "#{key} = ?"}
+    where_line = where_line.join(" AND ")
+    result = DBConnection.execute(<<-SQL, *params.values)
+      SELECT *
+      FROM #{table_name}
+      WHERE #{where_line}
+    SQL
+    parse_all(result)
+  end
+end
+
+class SQLObject
+  extend Searchable
+end
+```
+`where_line` takes all the attribute keys and maps them to the where line used in the heredoc SQL query and then the actual values are passed in with `*params.values`.
+
+### Associations
+I moved onto implementing ActiveRecord Associations here using `belongs_to` and `has_many`. `AssocObjects` is a class that will hold relevant information for both associations: `#foreign_key`, `#class_name`, and `#primary_key`. `BelongsToOptions` and `HasManyOptions` are children classes of `AssocObjects` and only exist to provide default values for the attributes listed above:
+```ruby
+class BelongsToOptions < AssocOptions
+  def initialize(name, options = {})
+    @foreign_key = options[:foreign_key] ? options[:foreign_key] : (name.to_s + "_id").to_sym
+    @class_name = options[:class_name] ? options[:class_name] : name.to_s.capitalize
+    @primary_key = options[:primary_key] ? options[:primary_key] : :id
+  end
+end
+
+class HasManyOptions < AssocOptions
+  def initialize(name, self_class_name, options = {})
+    @foreign_key = options[:foreign_key] ? options[:foreign_key] : (self_class_name.downcase + "_id").to_sym
+    @class_name = options[:class_name] ? options[:class_name] : name[0..-2].to_s.capitalize
+    @primary_key = options[:primary_key] ? options[:primary_key] : :id
+  end
+end
+```
+I allow the user to input custom values using `options = {}`, but defaults are provided as well.
+
+I then implement `model_class` and `table_name` in `AssocObjects` to allow the following functionality:
+```ruby
+options = BelongsToOptions.new(:owner, :class_name => "User")
+options.model_class # => User
+options.table_name # => "users"
+```
+The user can now specify a different name for their associations.
