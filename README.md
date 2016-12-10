@@ -3,7 +3,7 @@
 ### SQL Object
 SQL Object is what will interact with the database. (analogous to `ActiveRecord::Base`). Basically, it retrieves data from the database and turns it into a Ruby object for easy manipulation.
 
-First, I defined `table_name` and `table_name=` methods which are simply stored as instance variables in the class (not ivar of an object of the class). Our classes will inherit from this SQLObject class thus, coverting the class name to the correct table name. I used the `String#stringify` method from 'active_support/inflector':
+First, I defined `table_name` and `table_name=` class methods which are simply stored as instance variables in the class (not ivar of an object of the class). Our classes will inherit from this SQLObject class thus, coverting the class name to the correct table name. I used the `String#stringify` method from 'active_support/inflector':
 
 ```ruby
 class User < SQLObject
@@ -12,7 +12,24 @@ end
 User.table_name # => "users"
 ```
 
-Next, I needed to be able to use getters and setters for the columns in the database. I did this by first fetching the columns, creating setters and getters using `define_method`, storing these columns as keys in an `@attributes` hash as in ivar, and then instantiating an object using an options hash. Now, I'm able to do something like the following:
+Next, I needed to be able to use getters and setters for the columns in the database. I did this by first fetching the columns, creating setters and getters using `define_method`, storing these columns as keys in an `self.attributes` hash as in ivar, and then instantiating an object using an options hash. This all happens within the `finalize!` method which gets called at the end of a class declaration.
+```ruby
+def self.columns
+  @columns ||= DBConnection.execute2(<<-SQL)
+    SELECT *
+    FROM #{table_name}
+  SQL
+    .first.map { |column| column.to_sym }
+end
+
+def self.finalize!
+  columns.each do |column|
+    define_method(column) { self.attributes[column] }
+    define_method("#{column}=") { |val| self.attributes[column] = val }
+  end
+end
+```
+Now, I'm able to do something like the following:
 
 ```ruby
 dan = User.new
@@ -23,7 +40,7 @@ dan.name # => "Dan"
 dan.age # => 24
 ```
 
-Then, I implement #all method with retrieves all rows in the DB. This is done using a heredoc:
+Then, I implement `#all` method with retrieves all rows in the DB. This is done using a heredoc:
 ```ruby
 DBConnection.execute(<<-SQL)
   SELECT *
@@ -87,6 +104,18 @@ class HasManyOptions < AssocOptions
     @primary_key = options[:primary_key] ? options[:primary_key] : :id
   end
 end
+
+
+# example
+options = BelongsToOptions.new(:owner)
+options.foreign_key # => :owner_id
+options.primary_key # => :id
+# this is incorrect, so...
+options.class_name # => "Owner"
+
+# we override defaults
+options = BelongsToOptions.new(:owner, :class_name => "User")
+options.class_name # => "User"
 ```
 I allow the user to input custom values using `options = {}`, but defaults are provided as well.
 
@@ -111,6 +140,8 @@ def has_many(name, options = {})
   end
 end
 ```
+
+Now, the user can assign either association which will execute the correct query and retrieve the appropriate information from the database.
 
 #### has_one_through
 Last is the `has_one_through` association which combines the previous two. The goal is to be able to do the following:
@@ -199,3 +230,9 @@ def has_one_through(name, through_name, source_name)
   end
 end
 ```
+
+### Ideas for project continuation
+For further implementation, I'd continue on implementing `ActiveRecord` methods such as `includes` and `has_many :through`.
+
+
+This was a class project designed by App Academy.
